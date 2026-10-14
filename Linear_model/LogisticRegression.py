@@ -1,21 +1,50 @@
 import numpy as np
 
 class LogisticRegression:
-    def __init__(self, max_iter: int = 1000, lr: float = 0.01, random_state: int = 42):
+    def __init__(self,
+                penalty: str = None,
+                alpha: float = 0.1,
+                l1_ratio: float = 0.5,
+                max_iter: int = 1000,
+                lr: float = 0.01,
+                random_state: int = 42):
+        self.penalty = penalty
+        self.alpha = alpha
+        self.l1_ratio = l1_ratio
+
         self.max_iter = max_iter
         self.lr = lr
         self.random_state = random_state
 
-        self.intercept_ = None
         self.coefs_ = None
+        self.intercept_ = None
 
-    def fit(self, X, y, method: str = 'gd', batch_size: int = 40):
-        X = np.asarray(X, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64).ravel()
+    def _sigmoid(self, z):
+        z = np.clip(z, -500, 500)
+        return 1 / (1 + np.exp(-z))
 
+    def _calculate_penalty(self, n_samples):
+        if self.penalty is None or self.alpha == 0.0:
+            return 0.0
+
+        if self.penalty == "l2":
+            return (self.alpha / n_samples) * self.coefs_
+        elif self.penalty == "l1":
+            return (self.alpha / n_samples) * np.sign(self.coefs_)
+        elif self.penalty == "elasticnet":
+            l2_grad = (self.alpha * (1 - self.l1_ratio) / n_samples) * self.coefs_
+            l1_grad = (self.alpha * self.l1_ratio / n_samples) * np.sign(self.coefs_)
+            return l2_grad + l1_grad
+        else:
+            raise ValueError(f"Неизвестный {self.penalty}, введите значение из списка ['l2', 'l1', 'elasticnet']")
+
+    def fit(self, X, y, method: str = "gd", batch_size: int = 32):
+        X = np.asarray(X, dtype = np.float64)
+        y = np.asarray(y, dtype = np.float64).ravel()
         n_samples, n_features = X.shape
+
         rng = np.random.default_rng(self.random_state)
-        self.coefs_ = rng.normal(loc=0.0, scale=0.01, size=n_features)
+        self.coefs_ = rng.normal(loc=0.0, scale=0.01, size = n_features)
         self.intercept_ = 0.0
 
         method = method.lower().replace("_", "-")
@@ -32,15 +61,10 @@ class LogisticRegression:
 
         return self
 
-    def _sigmoid(self, z):
-        z = np.clip(z, -500, 500)
-        return 1 / (1 + np.exp(-z))
-
     def _fit_gd(self, X, y, n_samples):
         for _ in range(self.max_iter):
             errors = self._sigmoid(self.intercept_ + X @ self.coefs_) - y
-
-            dw = (1 / n_samples) * X.T @ errors
+            dw = (1 / n_samples) * X.T @ errors + self._calculate_penalty(n_samples)
             db = (1 / n_samples) * np.sum(errors)
 
             self.coefs_ -= self.lr * dw
@@ -52,9 +76,9 @@ class LogisticRegression:
             for idx in indices:
                 X_i = X[idx]
                 y_i = y[idx]
-
                 error = self._sigmoid(self.intercept_ + X_i @ self.coefs_) - y_i
-                dw = X_i * error
+
+                dw = X_i * error + self._calculate_penalty(n_samples)
                 db = error
 
                 self.coefs_ -= self.lr * dw
@@ -65,7 +89,6 @@ class LogisticRegression:
             indices = rng.permutation(n_samples)
             X_shuffled = X[indices]
             y_shuffled = y[indices]
-
             for start_idx in range(0, n_samples, self.batch_size):
                 end_idx = start_idx + self.batch_size
                 X_batch = X_shuffled[start_idx:end_idx]
@@ -73,19 +96,18 @@ class LogisticRegression:
                 n_batch = X_batch.shape[0]
 
                 errors = self._sigmoid(self.intercept_ + X_batch @ self.coefs_) - y_batch
-
-                dw = (1 / n_batch) * X_batch.T @ errors
+                dw = (1 / n_batch) * X_batch.T @ errors + self._calculate_penalty(n_samples)
                 db = (1 / n_batch) * np.sum(errors)
 
                 self.coefs_ -= self.lr * dw
                 self.intercept_ -= self.lr * db
 
     def predict_proba(self, X):
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype = np.float64)
         y_proba = self._sigmoid(self.intercept_ + X @ self.coefs_)
         return np.column_stack((1 - y_proba, y_proba))
 
     def predict(self, X, threshold: float = 0.5):
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype = np.float64)
         proba = self.predict_proba(X)[:,1]
         return (proba >= threshold).astype(int)
